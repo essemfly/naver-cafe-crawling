@@ -43,7 +43,7 @@ func main() {
 	// 최대 페이지 수 설정 (0은 무제한)
 	maxPages := 0
 	// pageSize 설정 (기본값: 10)
-	pageSize := 5
+	pageSize := 10
 
 	if pageSizeStr := os.Getenv("NAVER_PAGE_SIZE"); pageSizeStr != "" {
 		if size, err := strconv.Atoi(pageSizeStr); err == nil && size > 0 {
