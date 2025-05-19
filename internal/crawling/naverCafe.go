@@ -8,6 +8,8 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -216,10 +218,12 @@ func getArticleDetail(cafeId string, articleId int, cookie string) (map[string]i
 // 게시판 크롤링
 func CrawlBoard(cafeId, boardID string, cookie string, maxPages int, pageSize int) ([]map[string]interface{}, error) {
 	// 첫 페이지를 가져와서 마지막 페이지 번호 확인
+	log.Printf("📥 첫 페이지 로딩 중...")
 	firstPagePosts, lastPage, err := getPostList(cafeId, boardID, 1, pageSize, cookie)
 	if err != nil {
 		return nil, fmt.Errorf("첫 페이지 로드 실패: %v", err)
 	}
+	log.Printf("✅ 첫 페이지 로드 완료 (%d개 게시글 발견)", len(firstPagePosts))
 
 	// 크롤링할 페이지 수 결정
 	pagesToCrawl := lastPage
@@ -227,14 +231,17 @@ func CrawlBoard(cafeId, boardID string, cookie string, maxPages int, pageSize in
 		pagesToCrawl = maxPages
 	}
 
-	log.Printf("총 %d 페이지 중 %d 페이지 크롤링 시작 (페이지당 최신순, 동시 처리 3페이지)", lastPage, pagesToCrawl)
+	log.Printf("🚀 총 %d 페이지 중 %d 페이지 크롤링 시작 (페이지당 %d개 게시글, 동시 처리 3페이지)",
+		lastPage, pagesToCrawl, pageSize)
 
 	var allPosts []map[string]interface{}
 	var mu sync.Mutex
 
 	// 첫 페이지 결과에 상세 정보 추가
+	log.Printf("📝 첫 페이지 게시글 상세 정보 수집 중...")
 	for i, post := range firstPagePosts {
 		articleId := post["id"].(int)
+		log.Printf("  - 게시글 %d/%d 처리 중...", i+1, len(firstPagePosts))
 		detail, err := getArticleDetail(cafeId, articleId, cookie)
 		if err != nil {
 			log.Printf("⚠️ 게시글 %d 상세 정보 가져오기 실패: %v", articleId, err)
@@ -242,8 +249,35 @@ func CrawlBoard(cafeId, boardID string, cookie string, maxPages int, pageSize in
 		}
 		firstPagePosts[i]["content"] = detail["content_html"]
 		firstPagePosts[i]["comments"] = detail["comments"]
+		log.Printf("  ✅ 게시글 %d 처리 완료 (댓글 %d개)", articleId, len(detail["comments"].([]map[string]interface{})))
 	}
 	allPosts = append(allPosts, firstPagePosts...)
+	log.Printf("✅ 첫 페이지 상세 정보 수집 완료")
+
+	// 첫 페이지 결과를 즉시 저장
+	timestamp := time.Now().Format("20060102_150405")
+	outputDir := "output"
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		log.Printf("⚠️ 출력 디렉토리 생성 실패: %v", err)
+	} else {
+		// 첫 페이지 전체 결과 저장
+		fullFilename := filepath.Join(outputDir, fmt.Sprintf("cafe_%s_board_%s_%s_full.json",
+			cafeId, boardID, timestamp))
+		if err := saveToJSON(firstPagePosts, fullFilename); err != nil {
+			log.Printf("⚠️ 첫 페이지 전체 결과 저장 실패: %v", err)
+		} else {
+			log.Printf("💾 첫 페이지 전체 결과가 %s 파일로 저장되었습니다.", fullFilename)
+		}
+
+		// 첫 페이지 개별 파일 저장
+		pageFilename := filepath.Join(outputDir, fmt.Sprintf("cafe_%s_board_%s_%s_page_1.json",
+			cafeId, boardID, timestamp))
+		if err := saveToJSON(firstPagePosts, pageFilename); err != nil {
+			log.Printf("⚠️ 첫 페이지 결과 저장 실패: %v", err)
+		} else {
+			log.Printf("💾 첫 페이지 결과가 %s 파일로 저장되었습니다.", pageFilename)
+		}
+	}
 
 	// 컨텍스트와 에러그룹 생성
 	ctx := context.Background()
@@ -258,14 +292,18 @@ func CrawlBoard(cafeId, boardID string, cookie string, maxPages int, pageSize in
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
+				log.Printf("📥 %d페이지 로딩 중...", page)
 				posts, _, err := getPostList(cafeId, boardID, page, pageSize, cookie)
 				if err != nil {
 					return fmt.Errorf("페이지 %d 크롤링 실패: %v", page, err)
 				}
+				log.Printf("✅ %d페이지 로드 완료 (%d개 게시글 발견)", page, len(posts))
 
 				// 각 게시글의 상세 정보 가져오기
+				log.Printf("📝 %d페이지 게시글 상세 정보 수집 중...", page)
 				for i, post := range posts {
 					articleId := post["id"].(int)
+					log.Printf("  - %d페이지 게시글 %d/%d 처리 중...", page, i+1, len(posts))
 					detail, err := getArticleDetail(cafeId, articleId, cookie)
 					if err != nil {
 						log.Printf("⚠️ 게시글 %d 상세 정보 가져오기 실패: %v", articleId, err)
@@ -273,13 +311,34 @@ func CrawlBoard(cafeId, boardID string, cookie string, maxPages int, pageSize in
 					}
 					posts[i]["content"] = detail["content_html"]
 					posts[i]["comments"] = detail["comments"]
+					log.Printf("  ✅ %d페이지 게시글 %d 처리 완료 (댓글 %d개)",
+						page, articleId, len(detail["comments"].([]map[string]interface{})))
 				}
 
 				mu.Lock()
 				allPosts = append(allPosts, posts...)
 				mu.Unlock()
 
-				log.Printf("✅ %d/%d 페이지 크롤링 완료 (%d개 게시글)", page, pagesToCrawl, len(posts))
+				// 페이지 결과를 즉시 저장
+				pageFilename := filepath.Join(outputDir, fmt.Sprintf("cafe_%s_board_%s_%s_page_%d.json",
+					cafeId, boardID, timestamp, page))
+				if err := saveToJSON(posts, pageFilename); err != nil {
+					log.Printf("⚠️ %d페이지 결과 저장 실패: %v", page, err)
+				} else {
+					log.Printf("💾 %d페이지 결과가 %s 파일로 저장되었습니다.", page, pageFilename)
+				}
+
+				// 전체 결과 업데이트
+				fullFilename := filepath.Join(outputDir, fmt.Sprintf("cafe_%s_board_%s_%s_full.json",
+					cafeId, boardID, timestamp))
+				if err := saveToJSON(allPosts, fullFilename); err != nil {
+					log.Printf("⚠️ 전체 결과 업데이트 실패: %v", err)
+				} else {
+					log.Printf("💾 전체 결과가 업데이트되었습니다. (현재 %d개 게시글)", len(allPosts))
+				}
+
+				log.Printf("✅ %d/%d 페이지 크롤링 완료 (누적 %d개 게시글)",
+					page, pagesToCrawl, len(allPosts))
 				return nil
 			}
 		})
@@ -290,6 +349,20 @@ func CrawlBoard(cafeId, boardID string, cookie string, maxPages int, pageSize in
 		return nil, err
 	}
 
-	log.Printf("✅ 크롤링 완료! 총 %d개 게시글 수집", len(allPosts))
+	log.Printf("🎉 크롤링 완료! 총 %d개 게시글 수집", len(allPosts))
 	return allPosts, nil
+}
+
+// JSON 저장 함수
+func saveToJSON(data interface{}, filename string) error {
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("JSON 변환 실패: %v", err)
+	}
+
+	if err := os.WriteFile(filename, jsonData, 0644); err != nil {
+		return fmt.Errorf("파일 저장 실패: %v", err)
+	}
+
+	return nil
 }

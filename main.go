@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +12,19 @@ import (
 
 	"github.com/joho/godotenv"
 )
+
+func saveToJSON(data interface{}, filename string) error {
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("JSON 변환 실패: %v", err)
+	}
+
+	if err := os.WriteFile(filename, jsonData, 0644); err != nil {
+		return fmt.Errorf("파일 저장 실패: %v", err)
+	}
+
+	return nil
+}
 
 func main() {
 	err := godotenv.Load()
@@ -28,8 +42,8 @@ func main() {
 
 	// 최대 페이지 수 설정 (0은 무제한)
 	maxPages := 0
-	// pageSize 설정 (기본값: 50)
-	pageSize := 50
+	// pageSize 설정 (기본값: 10)
+	pageSize := 5
 
 	if pageSizeStr := os.Getenv("NAVER_PAGE_SIZE"); pageSizeStr != "" {
 		if size, err := strconv.Atoi(pageSizeStr); err == nil && size > 0 {
@@ -46,6 +60,8 @@ func main() {
 	}
 
 	fmt.Printf("✅ 크롤링 완료! 총 %d개 게시글 수집\n", len(posts))
+
+	// 콘솔에도 결과 출력
 	for _, post := range posts {
 		fmt.Printf("\n📌 [%d] %s\n", post["id"], post["title"])
 		fmt.Printf("👤 작성자: %s (레벨: %s)\n", post["writer"], post["writer_level"])

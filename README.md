@@ -66,7 +66,7 @@
 `main.go` 파일에서 다음 설정을 변경할 수 있습니다:
 
 - `maxPages`: 크롤링할 최대 페이지 수 (0은 모든 페이지)
-- `pageSize`: 한 페이지당 가져올 게시글 수 (기본값: 50)
+- `pageSize`: 한 페이지당 가져올 게시글 수 (기본값: 10)
 
 ## 📝 수집되는 정보
 
@@ -76,6 +76,36 @@
 - 조회수, 댓글수, 좋아요수
 - 게시글 내용
 - 댓글 내용
+
+## 💾 결과 저장
+
+크롤링한 결과는 다음과 같이 저장됩니다:
+
+1. `output` 폴더에 JSON 파일로 자동 저장됩니다.
+2. 파일명 형식: `cafe_posts_YYYYMMDD_HHMMSS.json`
+3. JSON 파일은 다음과 같은 구조로 저장됩니다:
+   ```json
+   [
+     {
+       "id": "게시글ID",
+       "title": "제목",
+       "writer": "작성자",
+       "writer_level": "작성자레벨",
+       "write_date": "작성일시",
+       "read_count": "조회수",
+       "comment_count": "댓글수",
+       "like_count": "좋아요수",
+       "content": "게시글내용",
+       "comments": [
+         {
+           "writer": "댓글작성자",
+           "content": "댓글내용",
+           "write_date": "댓글작성일시"
+         }
+       ]
+     }
+   ]
+   ```
 
 ## ⚠️ 주의사항
 
