@@ -1,0 +1,32 @@
+# Go specific
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+
+# Go workspace
+/bin/
+/pkg/
+
+# IDE specific
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+.env
+*.log
+crawled_data/
+output/
+
+# Dependencies
+/vendor/
+
+# Binary files
+naverCafeCrawler 
