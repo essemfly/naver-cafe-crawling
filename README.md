@@ -22,7 +22,6 @@ go mod download
 NAVER_CAFE_ID=your_cafe_id
 NAVER_BOARD_ID=your_board_id
 NAVER_COOKIE=your_cookie
-NAVER_PAGE_SIZE=50  # 선택사항: 한 페이지당 게시글 수 (기본값: 50)
 ```
 
 ### 실행

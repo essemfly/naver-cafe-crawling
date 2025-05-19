@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"strings"
 
 	"naverCafeCrawler/internal/crawling"
@@ -44,14 +43,6 @@ func main() {
 	maxPages := 0
 	// pageSize 설정 (기본값: 10)
 	pageSize := 10
-
-	if pageSizeStr := os.Getenv("NAVER_PAGE_SIZE"); pageSizeStr != "" {
-		if size, err := strconv.Atoi(pageSizeStr); err == nil && size > 0 {
-			pageSize = size
-		} else {
-			log.Printf("⚠️ 잘못된 NAVER_PAGE_SIZE 값입니다. 기본값(50)을 사용합니다.")
-		}
-	}
 
 	fmt.Println("🚀 네이버 카페 크롤링 시작...")
 	posts, err := crawling.CrawlBoard(cafeId, boardID, cookie, maxPages, pageSize)
