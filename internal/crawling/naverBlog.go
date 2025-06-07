@@ -1,15 +1,21 @@
 package crawling
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"naverCafeCrawler/internal/utils"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
 )
 
-// Article represents a blog post.
+// BlogPost represents a blog post.
 type BlogPost struct {
 	ID          string        `json:"id"`
 	Title       string        `json:"title"`
@@ -28,301 +34,260 @@ type BlogComment struct {
 	WriteDate string `json:"write_date"`
 }
 
+// NaverBlogResponse represents the response from Naver Blog API
+type NaverBlogResponse struct {
+	ResultCode    string `json:"resultCode"`
+	ResultMessage string `json:"resultMessage"`
+	PostList      []struct {
+		LogNo            string `json:"logNo"`
+		Title            string `json:"title"`
+		CategoryNo       string `json:"categoryNo"`
+		ParentCategoryNo string `json:"parentCategoryNo"`
+		CommentCount     string `json:"commentCount"`
+		ReadCount        string `json:"readCount"`
+		AddDate          string `json:"addDate"`
+	} `json:"postList"`
+	CountPerPage string `json:"countPerPage"`
+	TotalCount   string `json:"totalCount"`
+}
+
+// 셀렉터 상수 정의
+const (
+	postListSelectors = ".post-item, .blog2_series, .item_post, .post_area, #content-area .post, .list_post .post, .area_list_post .post, .blog_list .post, .list_post, .post_list, .post_item, .post"
+	linkSelectors     = "a[href*='logNo='], .link_post, .post_title a, .title a, a.link_title, .post_title a, .title a, a[href*='/PostView.naver']"
+	titleSelectors    = ".post_title, .title, .subject, .tit, .post_title_text, .post_title a"
+
+	detailTitleSelectors    = ".se-title-text, .pcol1 .itemSubjectBoldfont, .tit_area .tit, .post_title, .title_area .title, #content-area .post_title, .se-module-text h1, .se-module-text h2, .se-module-text .se-text-paragraph:first-child, .post_title, .se-title, .se-title-text"
+	writerSelectors         = ".nick_name, .blog_author .author_name, .author, .writer, .nickname, .blog_name, .blog_name, .nickname"
+	dateSelectors           = ".se_time, .blog_header_info .date, ._postContents .post_info .date, .post_date, .date, .write_date, .se_publishDate, .date"
+	contentSelectors        = ".se-main-container, .post_content, .se-component.se-text.se-section, .sect_dsc, .post_ct, #content-area .post_content, .se-module-text, .pcol1 .post_content, .se-main-container, .post-view"
+	commentSelectors        = ".comment_area .comment_item, ._commentWrapper .comment_row, .comment_list .comment, .cmt_area .cmt_item, .comment_item"
+	commentContentSelectors = ".comment_text, .text_comment, .cmt_text, .comment_text_box"
+	commentWriterSelectors  = ".comment_nick, .author_name, .cmt_nick, .comment_nick_box"
+	commentDateSelectors    = ".comment_date, .date, .cmt_date, .comment_date_box"
+)
+
 // 게시글 목록 가져오기 - 개선된 버전
 func GetBlogPostList(blogID string, page int) ([]BlogPost, error) {
-	// 다양한 네이버 블로그 URL 패턴 시도
-	urls := []string{
-		fmt.Sprintf("https://blog.naver.com/PostList.naver?blogId=%s&from=postList&categoryNo=0&currentPage=%d", blogID, page),
-		fmt.Sprintf("https://blog.naver.com/%s/postList?currentPage=%d", blogID, page),
-		fmt.Sprintf("https://blog.naver.com/%s", blogID), // 메인 페이지
+	url := fmt.Sprintf("https://blog.naver.com/PostTitleListAsync.naver?blogId=%s&viewdate=&currentPage=%d&categoryNo=0&parentCategoryNo=&countPerPage=5", blogID, page)
+
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("게시글 목록 요청 실패: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 응답 본문 읽기
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("응답 읽기 실패: %v", err)
 	}
 
-	var doc *goquery.Document
-	var err error
-	var successURL string
+	// 작은따옴표를 큰따옴표로 변환
+	jsonStr := strings.ReplaceAll(string(body), "'", "\"")
 
-	for _, url := range urls {
-		log.Printf("🔍 시도 중인 URL: %s", url)
-		doc, err = utils.GetHTMLResponse(client, url)
-		if err == nil {
-			successURL = url
-			break
-		}
-		log.Printf("⚠️ URL 실패: %s - %v", url, err)
+	var blogResponse NaverBlogResponse
+	if err := json.Unmarshal([]byte(jsonStr), &blogResponse); err != nil {
+		return nil, fmt.Errorf("JSON 파싱 실패: %v", err)
 	}
 
-	if doc == nil {
-		return nil, fmt.Errorf("모든 URL 시도 실패: %v", err)
+	if blogResponse.ResultCode != "S" {
+		return nil, fmt.Errorf("API 응답 오류: %s", blogResponse.ResultMessage)
 	}
-
-	log.Printf("✅ 성공한 URL: %s", successURL)
 
 	var posts []BlogPost
-
-	// 다양한 셀렉터 패턴 시도
-	selectors := []string{
-		".post-item",
-		".blog2_series",
-		".item_post",
-		".post_area",
-		"#content-area .post",
-		".list_post .post",
-		".area_list_post .post",
-		".blog_list .post",
-	}
-
-	found := false
-	for _, selector := range selectors {
-		doc.Find(selector).Each(func(i int, s *goquery.Selection) {
-			found = true
-
-			// 링크 찾기
-			var href string
-			var title string
-
-			// 다양한 링크 셀렉터 시도
-			linkSelectors := []string{
-				"a[href*='logNo=']",
-				".link_post",
-				".post_title a",
-				".title a",
-				"a.link_title",
-			}
-
-			for _, linkSel := range linkSelectors {
-				if link := s.Find(linkSel).First(); link.Length() > 0 {
-					if h, exists := link.Attr("href"); exists {
-						href = h
-						title = strings.TrimSpace(link.Text())
-						break
-					}
-				}
-			}
-
-			// href가 상대 경로인 경우 절대 경로로 변환
-			if href != "" && !strings.HasPrefix(href, "http") {
-				if strings.HasPrefix(href, "/") {
-					href = "https://blog.naver.com" + href
-				}
-			}
-
-			// 제목이 없으면 다른 셀렉터로 찾기
-			if title == "" {
-				titleSelectors := []string{
-					".post_title",
-					".title",
-					".subject",
-					".tit",
-				}
-				for _, titleSel := range titleSelectors {
-					if titleEl := s.Find(titleSel).First(); titleEl.Length() > 0 {
-						title = strings.TrimSpace(titleEl.Text())
-						if title != "" {
-							break
-						}
-					}
-				}
-			}
-
-			// logNo 추출
-			articleID := utils.ExtractLogNo(href)
-
-			if articleID != "" && title != "" {
-				post := BlogPost{
-					ID:          articleID,
-					Title:       title,
-					OriginalURL: fmt.Sprintf("https://blog.naver.com/%s/%s", blogID, articleID),
-				}
-				posts = append(posts, post)
-				log.Printf("📄 발견된 게시글: ID=%s, Title=%s", articleID, title)
-			}
-		})
-
-		if found {
-			break
-		}
-	}
-
-	// 추가적으로 iframe 내부 확인 (네이버 블로그는 iframe을 사용하는 경우가 많음)
-	if !found {
-		log.Printf("📝 iframe 내부 확인 중...")
-		doc.Find("iframe").Each(func(i int, s *goquery.Selection) {
-			if src, exists := s.Attr("src"); exists {
-				log.Printf("🔍 발견된 iframe: %s", src)
-			}
+	for _, post := range blogResponse.PostList {
+		posts = append(posts, BlogPost{
+			ID:          post.LogNo,
+			Title:       post.Title,
+			WriteDate:   post.AddDate,
+			OriginalURL: fmt.Sprintf("https://blog.naver.com/%s/%s", blogID, post.LogNo),
 		})
 	}
 
-	log.Printf("📄 페이지 %d: %d개 게시글 발견", page, len(posts))
+	if len(posts) == 0 {
+		log.Printf("⚠️ 게시글을 찾을 수 없습니다. URL: %s", url)
+	}
+
 	return posts, nil
 }
 
 // 게시글 상세 정보 가져오기 - 개선된 버전
 func GetBlogPostDetail(blogID string, articleID string) (BlogPost, error) {
-	// 다양한 URL 패턴 시도
 	urls := []string{
 		fmt.Sprintf("https://blog.naver.com/%s/%s", blogID, articleID),
 		fmt.Sprintf("https://blog.naver.com/PostView.naver?blogId=%s&logNo=%s", blogID, articleID),
 		fmt.Sprintf("https://blog.naver.com/PostView.nhn?blogId=%s&logNo=%s", blogID, articleID),
+		fmt.Sprintf("https://blog.naver.com/%s/entry/%s", blogID, articleID),
 	}
 
-	var doc *goquery.Document
-	var err error
-	var successURL string
-
-	for _, url := range urls {
-		log.Printf("🔍 게시글 URL 시도: %s", url)
-		doc, err = utils.GetHTMLResponse(client, url)
-		if err == nil {
-			successURL = url
-			break
-		}
-		log.Printf("⚠️ 게시글 URL 실패: %s - %v", url, err)
+	doc, successURL, err := utils.TryGetDocument(urls, client)
+	if err != nil {
+		return BlogPost{}, fmt.Errorf("게시글 상세 로드 실패: %v", err)
 	}
 
-	if doc == nil {
-		return BlogPost{}, fmt.Errorf("게시글 로드 실패 (모든 URL 시도 실패): %v", err)
+	blogPost := BlogPost{
+		ID:          articleID,
+		OriginalURL: successURL,
+		Title:       utils.FindFirstMatch(doc, detailTitleSelectors),
+		Writer:      utils.FindFirstMatch(doc, writerSelectors),
+		WriteDate:   utils.FindFirstMatch(doc, dateSelectors),
+		Content:     utils.ExtractContent(doc, contentSelectors),
+		Comments:    extractComments(doc),
 	}
 
-	log.Printf("✅ 게시글 성공 URL: %s", successURL)
-
-	var blogPost BlogPost
-	blogPost.ID = articleID
-	blogPost.OriginalURL = successURL
-
-	// 제목 추출 - 다양한 셀렉터 시도
-	titleSelectors := []string{
-		".se-title-text",
-		".pcol1 .itemSubjectBoldfont",
-		".tit_area .tit",
-		".post_title",
-		".title_area .title",
-		"#content-area .post_title",
-		".se-module-text h1",
-		".se-module-text h2",
-		".se-module-text .se-text-paragraph:first-child",
-	}
-
-	for _, sel := range titleSelectors {
-		if title := utils.CleanText(doc.Find(sel).First().Text()); title != "" {
-			blogPost.Title = title
-			break
-		}
-	}
-
-	// 작성자 추출
-	writerSelectors := []string{
-		".nick_name",
-		".blog_author .author_name",
-		".author",
-		".writer",
-		".nickname",
-		".blog_name",
-	}
-
-	for _, sel := range writerSelectors {
-		if writer := utils.CleanText(doc.Find(sel).First().Text()); writer != "" {
-			blogPost.Writer = writer
-			break
-		}
-	}
-
-	// 작성일 추출
-	dateSelectors := []string{
-		".se_time",
-		".blog_header_info .date",
-		"._postContents .post_info .date",
-		".post_date",
-		".date",
-		".write_date",
-	}
-
-	for _, sel := range dateSelectors {
-		if date := utils.CleanText(doc.Find(sel).First().Text()); date != "" {
-			blogPost.WriteDate = date
-			break
-		}
-	}
-
-	// 내용 추출 - 개선된 버전
-	var contentBuilder strings.Builder
-	contentSelectors := []string{
-		".se-main-container",
-		".post_content",
-		".se-component.se-text.se-section",
-		".sect_dsc",
-		".post_ct",
-		"#content-area .post_content",
-		".se-module-text",
-		".pcol1 .post_content",
-	}
-
-	contentFound := false
-	for _, sel := range contentSelectors {
-		doc.Find(sel).Each(func(i int, s *goquery.Selection) {
-			// 불필요한 요소 제거
-			s.Find("img, .se-sticker, .se-module-oglink, .se-map-container, .se-file-block, script, style").Remove()
-
-			// 텍스트 추출
-			text := utils.CleanText(s.Text())
-			if text != "" && len(text) > 10 { // 최소 길이 체크
-				contentBuilder.WriteString(text)
-				contentBuilder.WriteString("\n")
-				contentFound = true
-			}
-		})
-
-		if contentFound {
-			break
-		}
-	}
-
-	blogPost.Content = utils.CleanText(contentBuilder.String())
-
-	// 댓글 추출
-	var comments []BlogComment
-	commentSelectors := []string{
-		".comment_area .comment_item",
-		"._commentWrapper .comment_row",
-		".comment_list .comment",
-		".cmt_area .cmt_item",
-	}
-
-	for _, sel := range commentSelectors {
-		doc.Find(sel).Each(func(i int, s *goquery.Selection) {
-			commentContent := utils.CleanText(s.Find(".comment_text, .text_comment, .cmt_text").First().Text())
-			commentWriter := utils.CleanText(s.Find(".comment_nick, .author_name, .cmt_nick").First().Text())
-			commentDate := utils.CleanText(s.Find(".comment_date, .date, .cmt_date").First().Text())
-
-			if commentContent != "" {
-				comments = append(comments, BlogComment{
-					ID:        fmt.Sprintf("%d", i+1),
-					Content:   commentContent,
-					Writer:    commentWriter,
-					WriteDate: commentDate,
-				})
-			}
-		})
-
-		if len(comments) > 0 {
-			break
-		}
-	}
-
-	blogPost.Comments = comments
-
-	// 디버그 정보 출력
-	log.Printf("📝 게시글 처리 완료 - ID: %s", articleID)
-	log.Printf("   제목: %s", blogPost.Title)
-	log.Printf("   작성자: %s", blogPost.Writer)
-	log.Printf("   작성일: %s", blogPost.WriteDate)
-	log.Printf("   내용 길이: %d글자", len(blogPost.Content))
-	log.Printf("   댓글 수: %d개", len(comments))
-
-	// 필수 정보가 없으면 에러 반환
 	if blogPost.Title == "" && blogPost.Content == "" {
-		return blogPost, fmt.Errorf("게시글 정보를 추출할 수 없습니다 (제목과 내용 모두 비어있음)")
+		return blogPost, fmt.Errorf("게시글 정보를 추출할 수 없습니다")
 	}
 
 	return blogPost, nil
+}
+
+// CrawlBlog performs the main crawling operation for a Naver blog
+func CrawlBlog(blogID string, maxPages int) ([]BlogPost, error) {
+	log.Printf("🚀 네이버 블로그 '%s' 크롤링 시작...", blogID)
+
+	outputDir := "output_blog"
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("출력 디렉토리 생성 실패: %v", err)
+	}
+
+	var allPosts []BlogPost
+	var mu sync.Mutex
+
+	for page := 1; page <= maxPages; page++ {
+		detailedPostsOnPage, err := processPage(blogID, page, maxPages)
+		if err != nil {
+			log.Printf("⚠️ 페이지 %d 처리 실패: %v", page, err)
+			continue
+		}
+
+		if len(detailedPostsOnPage) == 0 {
+			continue
+		}
+
+		mu.Lock()
+		allPosts = append(allPosts, detailedPostsOnPage...)
+		mu.Unlock()
+
+		if err := savePageResults(blogID, page, detailedPostsOnPage, outputDir); err != nil {
+			log.Printf("⚠️ 페이지 %d 결과 저장 실패: %v", page, err)
+		}
+	}
+
+	if len(allPosts) > 0 {
+		if err := saveFullResults(blogID, allPosts, outputDir); err != nil {
+			log.Printf("⚠️ 전체 결과 저장 실패: %v", err)
+		}
+		printResults(allPosts)
+	} else {
+		fmt.Println("⚠️ 수집된 게시글이 없습니다. 블로그 ID를 확인해주세요.")
+	}
+
+	log.Printf("🎉 네이버 블로그 '%s' 크롤링 완료! 총 %d개 게시글 수집", blogID, len(allPosts))
+	return allPosts, nil
+}
+
+// Helper functions
+
+func extractComments(doc *goquery.Document) []BlogComment {
+	var comments []BlogComment
+	doc.Find(commentSelectors).Each(func(i int, s *goquery.Selection) {
+		content := utils.CleanText(s.Find(commentContentSelectors).First().Text())
+		if content != "" {
+			comments = append(comments, BlogComment{
+				ID:        fmt.Sprintf("%d", i+1),
+				Content:   content,
+				Writer:    utils.CleanText(s.Find(commentWriterSelectors).First().Text()),
+				WriteDate: utils.CleanText(s.Find(commentDateSelectors).First().Text()),
+			})
+		}
+	})
+	return comments
+}
+
+func processPage(blogID string, page, maxPages int) ([]BlogPost, error) {
+	log.Printf("🔄 %d/%d 페이지 처리 중...", page, maxPages)
+
+	postsOnPage, err := GetBlogPostList(blogID, page)
+	if err != nil {
+		return nil, fmt.Errorf("게시글 목록 가져오기 실패: %v", err)
+	}
+
+	if len(postsOnPage) == 0 {
+		return nil, fmt.Errorf("게시글을 찾을 수 없습니다")
+	}
+
+	var detailedPostsOnPage []BlogPost
+	for i, post := range postsOnPage {
+		log.Printf("  📖 %d페이지 게시글 %d/%d 상세 정보 처리 중... (ID: %s)", page, i+1, len(postsOnPage), post.ID)
+
+		detail, err := GetBlogPostDetail(blogID, post.ID)
+		if err != nil {
+			log.Printf("⚠️ 게시글 %s 상세 정보 가져오기 실패: %v", post.ID, err)
+			continue
+		}
+
+		if detail.Title != "" || detail.Content != "" {
+			detailedPostsOnPage = append(detailedPostsOnPage, detail)
+		}
+	}
+
+	return detailedPostsOnPage, nil
+}
+
+func savePageResults(blogID string, page int, posts []BlogPost, outputDir string) error {
+	timestamp := time.Now().Format("20060102_150405")
+	pageFilename := filepath.Join(outputDir, fmt.Sprintf("blog_%s_page_%d_%s.json", blogID, page, timestamp))
+
+	formattedPosts := formatPosts(posts)
+	if err := utils.SaveToJSON(formattedPosts, pageFilename); err != nil {
+		return fmt.Errorf("페이지 결과 저장 실패: %v", err)
+	}
+
+	return nil
+}
+
+func saveFullResults(blogID string, posts []BlogPost, outputDir string) error {
+	timestamp := time.Now().Format("20060102_150405")
+	fullFilename := filepath.Join(outputDir, fmt.Sprintf("blog_%s_full_%s.json", blogID, timestamp))
+
+	formattedPosts := formatPosts(posts)
+	if err := utils.SaveToJSON(formattedPosts, fullFilename); err != nil {
+		return fmt.Errorf("전체 결과 저장 실패: %v", err)
+	}
+
+	return nil
+}
+
+func formatPosts(posts []BlogPost) []map[string]interface{} {
+	var formattedPosts []map[string]interface{}
+	for _, post := range posts {
+		formattedPosts = append(formattedPosts, map[string]interface{}{
+			"title":   post.Title,
+			"content": post.Content,
+			"metadata": map[string]interface{}{
+				"id":         post.ID,
+				"writer":     post.Writer,
+				"write_date": post.WriteDate,
+				"url":        post.OriginalURL,
+			},
+			"comments": post.Comments,
+		})
+	}
+	return formattedPosts
+}
+
+func printResults(posts []BlogPost) {
+	fmt.Printf("\n📊 수집 결과 요약:\n")
+	for i, post := range posts {
+		if i >= 5 {
+			fmt.Printf("... 외 %d개 게시글\n", len(posts)-5)
+			break
+		}
+		fmt.Printf("📌 [%d] %s\n", i+1, post.Title)
+		fmt.Printf("   👤 %s | 📅 %s | 💬 %d개 댓글\n", post.Writer, post.WriteDate, len(post.Comments))
+		fmt.Printf("   📝 %s...\n", utils.TruncateString(post.Content, 100))
+		fmt.Println()
+	}
 }
