@@ -24,9 +24,11 @@ go.work
 *.log
 crawled_data/
 output/
+output_blog/
 
 # Dependencies
 /vendor/
 
 # Binary files
 naverCafeCrawler 
+
