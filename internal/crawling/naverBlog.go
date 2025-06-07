@@ -114,25 +114,43 @@ func GetBlogPostList(blogID string, page int) ([]BlogPost, error) {
 
 // 게시글 상세 정보 가져오기 - 개선된 버전
 func GetBlogPostDetail(blogID string, articleID string) (BlogPost, error) {
-	urls := []string{
-		fmt.Sprintf("https://blog.naver.com/%s/%s", blogID, articleID),
-		fmt.Sprintf("https://blog.naver.com/PostView.naver?blogId=%s&logNo=%s", blogID, articleID),
-		fmt.Sprintf("https://blog.naver.com/PostView.nhn?blogId=%s&logNo=%s", blogID, articleID),
-		fmt.Sprintf("https://blog.naver.com/%s/entry/%s", blogID, articleID),
-	}
+	url := fmt.Sprintf("https://blog.naver.com/PostView.naver?blogId=%s&logNo=%s", blogID, articleID)
 
-	doc, successURL, err := utils.TryGetDocument(urls, client)
+	resp, err := client.Get(url)
 	if err != nil {
 		return BlogPost{}, fmt.Errorf("게시글 상세 로드 실패: %v", err)
 	}
+	defer resp.Body.Close()
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return BlogPost{}, fmt.Errorf("HTML 파싱 실패: %v", err)
+	}
+
+	// script 태그 제거
+	doc.Find("script").Remove()
+
+	// title 태그에서 제목 추출
+	title := doc.Find("title").Text()
+	// 네이버 블로그 제목에서 불필요한 부분 제거 (예: " : 네이버 블로그")
+	title = strings.Split(title, " : 네이버 블로그")[0]
+
+	// .se-main-container 내의 콘텐츠만 추출
+	content := doc.Find(".se-main-container").Text()
+
+	// 연속된 공백과 줄바꿈 정리
+	content = strings.Join(strings.Fields(content), " ")
+
+	// 불필요한 공백 제거
+	content = strings.TrimSpace(content)
 
 	blogPost := BlogPost{
 		ID:          articleID,
-		OriginalURL: successURL,
-		Title:       utils.FindFirstMatch(doc, detailTitleSelectors),
+		OriginalURL: url,
+		Title:       title,
 		Writer:      utils.FindFirstMatch(doc, writerSelectors),
 		WriteDate:   utils.FindFirstMatch(doc, dateSelectors),
-		Content:     utils.ExtractContent(doc, contentSelectors),
+		Content:     content,
 		Comments:    extractComments(doc),
 	}
 
