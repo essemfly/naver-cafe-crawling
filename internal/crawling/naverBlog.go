@@ -53,11 +53,6 @@ type NaverBlogResponse struct {
 
 // 셀렉터 상수 정의
 const (
-	postListSelectors = ".post-item, .blog2_series, .item_post, .post_area, #content-area .post, .list_post .post, .area_list_post .post, .blog_list .post, .list_post, .post_list, .post_item, .post"
-	linkSelectors     = "a[href*='logNo='], .link_post, .post_title a, .title a, a.link_title, .post_title a, .title a, a[href*='/PostView.naver']"
-	titleSelectors    = ".post_title, .title, .subject, .tit, .post_title_text, .post_title a"
-
-	detailTitleSelectors    = ".se-title-text, .pcol1 .itemSubjectBoldfont, .tit_area .tit, .post_title, .title_area .title, #content-area .post_title, .se-module-text h1, .se-module-text h2, .se-module-text .se-text-paragraph:first-child, .post_title, .se-title, .se-title-text"
 	writerSelectors         = ".nick_name, .blog_author .author_name, .author, .writer, .nickname, .blog_name, .blog_name, .nickname"
 	dateSelectors           = ".se_time, .blog_header_info .date, ._postContents .post_info .date, .post_date, .date, .write_date, .se_publishDate, .date"
 	contentSelectors        = ".se-main-container, .post_content, .se-component.se-text.se-section, .sect_dsc, .post_ct, #content-area .post_content, .se-module-text, .pcol1 .post_content, .se-main-container, .post-view"
