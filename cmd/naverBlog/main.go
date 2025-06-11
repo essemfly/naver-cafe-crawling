@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
-	"naverCafeCrawler/internal/crawling"
 	"os"
+	"re_naverBlogCrawler/internal/crawling"
 
 	"github.com/joho/godotenv"
 )

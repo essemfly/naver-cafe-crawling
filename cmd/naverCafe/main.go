@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"naverCafeCrawler/internal/crawling"
+	"re_naverBlogCrawler/internal/crawling"
 
 	"github.com/joho/godotenv"
 )
